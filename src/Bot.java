@@ -53,7 +53,6 @@ public class Bot {
         try {
             while (!pool.isTerminated()) {
                 final Future<DownlaodData> future = service.take();
-//                System.out.println(future.get());
                 DownlaodData data = future.get();
                 Optional<Job> job = process(data, cache);
                 job.ifPresent(result::add);
@@ -118,8 +117,7 @@ public class Bot {
         } catch (IOException e) {
             error = e;
         }
-        DownlaodData data = new DownlaodData(document, job, error);
-        return data;
+        return new DownlaodData(document, job, error);
     }
 
     private static class DownlaodData {
