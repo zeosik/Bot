@@ -11,15 +11,17 @@ public class JobSimple {
     public final String link;
     public final String title;
     public final Date date;
+    final String company;
 
 
     //private static Map<String, Function<String, Date>>
 
-    public JobSimple(String id, String link, String title, String dateString) {
+    public JobSimple(String id, String link, String title, String dateString, String company) {
         this.id = id;
         this.link = link;
         this.title = title;
         this.date = DateParser.parseDate(dateString);
+        this.company = company;
     }
 
 

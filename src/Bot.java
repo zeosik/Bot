@@ -4,7 +4,6 @@ import org.jsoup.nodes.Element;
 import org.jsoup.nodes.TextNode;
 
 import javax.net.ssl.*;
-import javax.swing.text.html.Option;
 import java.io.IOException;
 import java.security.SecureRandom;
 import java.security.cert.CertificateException;
@@ -17,25 +16,26 @@ public class Bot {
     private final String link;
 
     public Bot(String link) {
+        trustEveryone();
         this.link = link;
     }
 
     public void updateCache() {
-        try (Cache cache = new Cache("cache.xml", "cache");){
-            trustEveryone();
+        try (Cache cache = Cache.create()){
 
-            Map<String, Document> pages = allPages(this.link);
-            List<JobSimple> simpelJobs = pages.values()
-                    .stream()
-                    .flatMap(x -> simpleJobList(x.body()).stream())
-                    .collect(Collectors.toList());
+            List<JobSimple> jobSimples = downloadJobSimples();
 
-            System.out.println("All jobs " + simpelJobs.size());
+            System.out.println("All jobs " + jobSimples.size());
 
-            List<JobSimple> outdated = cache.outdatedJobs(simpelJobs);
+            List<JobSimple> outdated = cache.outdatedJobs(jobSimples);
             System.out.println("Outdated jobs " + outdated.size());
 
-            List<Job> downloaded = downloadJobs(outdated, cache);
+            //outdated
+            //List<Job> downloaded = downloadJobs(outdated, cache);
+            //System.out.println("Download jobs " + downloaded.size());
+
+            //ALL
+            List<Job> downloaded = downloadJobs(jobSimples, cache);
             System.out.println("Download jobs " + downloaded.size());
 
         } catch (Exception e) {
@@ -43,24 +43,41 @@ public class Bot {
         }
     }
 
+    public List<JobSimple> downloadJobSimples() throws IOException {
+        Map<String, Document> pages = allPages(this.link);
+        List<JobSimple> simpleJobs = pages.values()
+                .stream()
+                .flatMap(x -> simpleJobList(x.body()).stream())
+                .collect(Collectors.toList());
+        return simpleJobs;
+    }
+
     private List<Job> downloadJobs(List<JobSimple> outdated, Cache cache) {
         List<Job> result = new ArrayList<>();
 
         final ExecutorService pool = Executors.newFixedThreadPool(2);
-        final CompletionService<DownlaodData> service = new ExecutorCompletionService<>(pool);
-        outdated.forEach(x -> service.submit(() -> downloadJob(x)));
-        pool.shutdown();
         try {
-            while (!pool.isTerminated()) {
-                final Future<DownlaodData> future = service.take();
-                DownlaodData data = future.get();
-                Optional<Job> job = process(data, cache);
-                job.ifPresent(result::add);
+            List<Future<Optional<Job>>> futures = new ArrayList<>();
+            List<Callable<Optional<Job>>> tasks = outdated.stream().map(x -> (Callable<Optional<Job>>) () -> downloadAndProcess(x, cache)).collect(Collectors.toList());
+            for (Callable<Optional<Job>> task : tasks) {
+                Future<Optional<Job>> future = pool.submit(task);
+                futures.add(future);
+                Thread.sleep(1000);
             }
-        } catch (ExecutionException | InterruptedException e) {
+            pool.shutdown();
+            pool.awaitTermination(5, TimeUnit.MINUTES);
+            for (Future<Optional<Job>> future : futures) {
+                future.get().ifPresent(result::add);
+            }
+        } catch (InterruptedException | ExecutionException e) {
             e.printStackTrace(System.err);
         }
         return result;
+    }
+
+    private Optional<Job> downloadAndProcess(JobSimple job, Cache cache) {
+        DownlaodData data = downloadJob(job);
+        return process(data, cache);
     }
 
     private Optional<Job> process(DownlaodData data, Cache cache) {
@@ -68,9 +85,11 @@ public class Bot {
             data.error.printStackTrace(System.err);
         }
         else if (data.document != null) {
+            System.out.println("Proccessing " + data.document.location());
             Job job = asJob(data.document.body(), data.jobSimple);
             cache.put(job);
             cache.savePage(data.document, job.jobSimple.id);
+            System.out.println("Proccessed finished " + data.document.location());
             return Optional.of(job);
         } else {
             System.err.println("Unknown error empty data: " + data.jobSimple.link);
@@ -82,19 +101,22 @@ public class Bot {
         Element descriptionPanel = body.selectFirst("div.panel__desc");
         Element detailsPanel = body.selectFirst("div.ogl__details");
         Element contantPanel = body.selectFirst("div.ogl__contact");
+        Optional<Element> details = Optional.ofNullable(detailsPanel)
+                .map(x -> x.selectFirst("div#show-address"))
+                .map(x -> x.selectFirst("div.ogl__details__desc"));
+        String zone = details
+                .map(this::extractZone)
+                .orElse("");
+        String street2 = details.map(x -> x.textNodes().stream().skip(1).findFirst().map(TextNode::text).orElse("")).orElse("");
+
         String street = Optional.ofNullable(contantPanel)
                 .map(x -> x.selectFirst("div#show-kontakt_ulica"))
                 .map(x -> x.selectFirst("div.ogl__details__desc"))
                 .map(x -> x.selectFirst("span"))
                 .map(Element::text)
                 .orElse("");
-        String zone = Optional.ofNullable(detailsPanel)
-                .map(x -> x.selectFirst("div#show-address"))
-                .map(x -> x.selectFirst("div.ogl__details__desc"))
-                .map(this::extractZone)
-                .orElse("");
 
-        return new Job(jobSimple, street, zone);
+        return new Job(jobSimple, StreetParser.parse(street), StreetParser.parse(street2), zone);
     }
 
     private String extractZone(Element zone) {
@@ -173,7 +195,12 @@ public class Bot {
         String link = a.attr("abs:href");
         String title = a.text();
         String dateString = listItem.selectFirst("div.list__item__footer").text();
-        return new JobSimple(id, link, title, dateString);
+
+        Optional<Element> companyPanel = Optional.of(listItem).map(x -> x.selectFirst("p.list__item__details__info"));
+        String company = companyPanel.map(x -> x.selectFirst("a"))
+                .map(Element::text)
+                .orElse(companyPanel.map(Element::text).orElse(""));
+        return new JobSimple(id, link, title, dateString, company);
     }
 
     private void trustEveryone() {

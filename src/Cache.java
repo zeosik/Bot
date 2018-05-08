@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -17,7 +18,7 @@ public class Cache implements Closeable {
 
     private final String cacheFilePath;
     private final String cacheDirPath;
-    HashMap<String, Job> cached;
+    public HashMap<String, Job> cached;
 
     public Cache(String cacheFilePath, String cacheDir) {
         this.cacheDirPath = cacheDir;
@@ -29,6 +30,14 @@ public class Cache implements Closeable {
         } else {
             this.cached = new HashMap<>();
         }
+    }
+
+    public static Cache create() {
+        return new Cache("cache.xml", "cache");
+    }
+
+    public List<Job> jobs() {
+        return new ArrayList<>(cached.values());
     }
 
     public List<JobSimple> outdatedJobs(List<JobSimple> all) {
